@@ -10,6 +10,20 @@
 ![Cost](https://img.shields.io/badge/费用-约¥3(medium)-green)
 ![Atlas](https://img.shields.io/badge/图集-1536x1872-orange)
 
+## 示例
+
+> 从一张参考图生成完整的像素风动画精灵图集，5 次 API 调用，费用约 ¥1.8
+
+**Homelander** — 基于参考图生成，pixel 风格，medium 质量
+
+| 基准形象 | 精灵图集 |
+|---------|---------|
+| <img src="examples/homelander/base.png" width="120"> | <img src="examples/homelander/spritesheet.png" width="400"> |
+
+| idle | running | waving | failed |
+|------|---------|--------|--------|
+| <img src="examples/homelander/previews/idle.gif" width="80"> | <img src="examples/homelander/previews/running-right.gif" width="80"> | <img src="examples/homelander/previews/waving.gif" width="80"> | <img src="examples/homelander/previews/failed.gif" width="80"> |
+
 ## 工作原理
 
 ```

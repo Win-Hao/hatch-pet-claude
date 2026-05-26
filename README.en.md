@@ -10,6 +10,20 @@ Adapted from [OpenAI's hatch-pet](https://github.com/openai/skills/tree/main/ski
 ![Cost](https://img.shields.io/badge/cost-~%240.44%20(medium)-green)
 ![Atlas](https://img.shields.io/badge/atlas-1536x1872-orange)
 
+## Example
+
+> From a reference image to a full animated sprite atlas in 5 API calls (~$0.25)
+
+**Homelander** — generated from reference image, pixel style, medium quality
+
+| Base | Sprite Atlas |
+|------|-------------|
+| <img src="examples/homelander/base.png" width="120"> | <img src="examples/homelander/spritesheet.png" width="400"> |
+
+| idle | running | waving | failed |
+|------|---------|--------|--------|
+| <img src="examples/homelander/previews/idle.gif" width="80"> | <img src="examples/homelander/previews/running-right.gif" width="80"> | <img src="examples/homelander/previews/waving.gif" width="80"> | <img src="examples/homelander/previews/failed.gif" width="80"> |
+
 ## How It Works
 
 ```
