@@ -260,12 +260,12 @@ def main():
     # 3. Row prompts
     for state_name in requested_states:
         cfg = STATES[state_name]
+        fc = cfg["frames"]
         rp = row_prompt(pet, state_name, cfg, chroma_name, chroma_hex, style_contract)
         prompt_path = prompts_dir / "rows" / f"{state_name}.md"
         prompt_path.write_text(rp)
         print(f"  rows/{state_name}.md")
 
-        fc = cfg["frames"]
         jobs.append({
             "id": f"row-{state_name}",
             "kind": "row-strip",
