@@ -4,6 +4,7 @@
 from PIL import Image, ImageDraw
 from pathlib import Path
 import json
+import shutil
 
 SKILL_DIR = Path(__file__).parent.parent
 RUN_DIR = SKILL_DIR / "run"
@@ -245,16 +246,22 @@ def main():
     (prompts_dir / "rows").mkdir(parents=True, exist_ok=True)
     (RUN_DIR / "decoded").mkdir(parents=True, exist_ok=True)
 
-    # 1. Layout guides
+    # 1. Layout guides — copy pre-generated from references/, fall back to dynamic generation
     print("=== Layout guides ===")
+    bundled_guides_dir = SKILL_DIR / "references" / "layout-guides"
     generated_guides = set()
     for state_name in requested_states:
         cfg = STATES[state_name]
         fc = cfg["frames"]
         if fc not in generated_guides:
-            path = guides_dir / f"{fc}f.png"
-            create_layout_guide(fc, path)
-            print(f"  {fc} frames: {path}")
+            dest = guides_dir / f"{fc}f.png"
+            bundled = bundled_guides_dir / f"{fc}f.png"
+            if bundled.exists():
+                shutil.copy2(bundled, dest)
+                print(f"  {fc} frames: copied from references/")
+            else:
+                create_layout_guide(fc, dest)
+                print(f"  {fc} frames: generated")
             generated_guides.add(fc)
 
     # 2. Base prompt
