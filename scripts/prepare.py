@@ -151,27 +151,31 @@ API_OUTPUT_HEIGHT = 1024
 
 def create_layout_guide(frame_count, output_path):
     """Create a layout guide at API output dimensions (1536x1024).
-    Frame slots are drawn centered vertically so the AI keeps characters
-    small and well-spaced, simulating the correct aspect ratio within
-    the fixed API output size."""
+    Frame slots are uniformly scaled up to fill the full canvas width,
+    preserving the original CELL_WIDTH:CELL_HEIGHT aspect ratio."""
     img = Image.new("RGB", (API_OUTPUT_WIDTH, API_OUTPUT_HEIGHT), (0xF7, 0xF7, 0xF7))
     draw = ImageDraw.Draw(img)
 
-    strip_w = frame_count * CELL_WIDTH
-    offset_x = (API_OUTPUT_WIDTH - strip_w) // 2
-    offset_y = (API_OUTPUT_HEIGHT - CELL_HEIGHT) // 2
+    scale = API_OUTPUT_WIDTH / (frame_count * CELL_WIDTH)
+    slot_w = round(CELL_WIDTH * scale)
+    slot_h = round(CELL_HEIGHT * scale)
+    margin_x = round(SAFE_MARGIN_X * scale)
+    margin_y = round(SAFE_MARGIN_Y * scale)
+    offset_y = (API_OUTPUT_HEIGHT - slot_h) // 2
 
     for i in range(frame_count):
-        x0 = offset_x + i * CELL_WIDTH
-        x1 = x0 + CELL_WIDTH
+        x0 = i * slot_w
+        x1 = x0 + slot_w
         y0 = offset_y
-        y1 = offset_y + CELL_HEIGHT
+        y1 = offset_y + slot_h
         draw.rectangle([x0, y0, x1 - 1, y1 - 1], outline=(0x11, 0x11, 0x11), width=2)
-        sx0, sy0 = x0 + SAFE_MARGIN_X, y0 + SAFE_MARGIN_Y
-        sx1, sy1 = x1 - SAFE_MARGIN_X, y1 - SAFE_MARGIN_Y
+        sx0 = x0 + margin_x
+        sy0 = y0 + margin_y
+        sx1 = x1 - margin_x
+        sy1 = y1 - margin_y
         draw.rectangle([sx0, sy0, sx1, sy1], outline=(0x2F, 0x80, 0xED), width=2)
-        cx = x0 + CELL_WIDTH // 2
-        cy = y0 + CELL_HEIGHT // 2
+        cx = x0 + slot_w // 2
+        cy = y0 + slot_h // 2
         draw_dashed_line(draw, (cx, sy0), (cx, sy1), (0xB8, 0xB8, 0xB8))
         draw_dashed_line(draw, (sx0, cy), (sx1, cy), (0xB8, 0xB8, 0xB8))
 
@@ -199,11 +203,9 @@ def row_prompt(pet, state_name, state_cfg, chroma_name, chroma_hex, style_contra
     requirements = "\n".join(f"- {r}" for r in state_cfg["requirements"])
     return f"""Create one horizontal animation strip for pet `{pet['name']}`, state `{state_name}`.
 
-Use the attached canonical base for identity. Use the attached layout guide to see where to place the characters — match the slot positions shown in the guide. Do not draw the guide itself.
+Use the attached canonical base for identity. Use the attached layout guide to see exactly where and how large to draw each character — match the slot positions, sizes, and spacing shown in the guide. Do not draw the guide lines themselves.
 
-LAYOUT: The output image is 1536x1024. Place exactly {frames} small full-body character poses in a single horizontal row centered vertically in the image. Each character should be approximately 180-200 pixels tall. Leave generous empty {chroma_name} {chroma_hex} background above and below. Keep generous horizontal spacing between characters — no overlap, no clipping, no touching.
-
-Output exactly {frames} full-body frames in one left-to-right row on flat pure {chroma_name} {chroma_hex}. Treat the row as {frames} invisible equal-width slots: one centered complete pose per slot. CRITICAL SPACING: each character must be fully contained within its slot with clear {chroma_name} gaps between adjacent characters. No character, limb, cape, hair, prop, or any part may touch or overlap with an adjacent slot. Leave at least 10% of each slot width as empty padding on both sides.
+Output exactly {frames} full-body frames on flat pure {chroma_name} {chroma_hex}. Place one centered complete pose per slot shown in the layout guide, keeping each character fully inside its slot with no overlap between adjacent characters.
 
 Identity: same pet in every frame: {pet['description']}. Preserve silhouette, face, proportions, markings, palette, material, style, and props.
 Style: {style_contract}
