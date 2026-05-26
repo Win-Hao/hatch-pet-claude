@@ -145,41 +145,47 @@ def draw_dashed_line(draw, start, end, color, width=1, dash=8, gap=6):
             x += dash + gap
 
 
-API_OUTPUT_WIDTH = 1536
-API_OUTPUT_HEIGHT = 1024
+MAX_ASPECT_RATIO = 3.0
+
+
+def compute_strip_size(frame_count):
+    """Compute the optimal API output size for a strip.
+    Width = frames * CELL_WIDTH, height = max(CELL_HEIGHT, width/3),
+    both rounded up to multiples of 16."""
+    w = frame_count * CELL_WIDTH
+    min_h = max(CELL_HEIGHT, -(-w // int(MAX_ASPECT_RATIO)))  # ceil division
+    h = (min_h + 15) // 16 * 16  # round up to multiple of 16
+    w = (w + 15) // 16 * 16
+    return f"{w}x{h}", w, h
 
 
 def create_layout_guide(frame_count, output_path):
-    """Create a layout guide at API output dimensions (1536x1024).
-    Frame slots are uniformly scaled up to fill the full canvas width,
-    preserving the original CELL_WIDTH:CELL_HEIGHT aspect ratio."""
-    img = Image.new("RGB", (API_OUTPUT_WIDTH, API_OUTPUT_HEIGHT), (0xF7, 0xF7, 0xF7))
+    """Create a layout guide at the exact API output size for this frame count.
+    Uses natural cell dimensions (192x208), centered vertically on the canvas."""
+    size_str, canvas_w, canvas_h = compute_strip_size(frame_count)
+    img = Image.new("RGB", (canvas_w, canvas_h), (0xF7, 0xF7, 0xF7))
     draw = ImageDraw.Draw(img)
 
-    scale = API_OUTPUT_WIDTH / (frame_count * CELL_WIDTH)
-    slot_w = round(CELL_WIDTH * scale)
-    slot_h = round(CELL_HEIGHT * scale)
-    margin_x = round(SAFE_MARGIN_X * scale)
-    margin_y = round(SAFE_MARGIN_Y * scale)
-    offset_y = (API_OUTPUT_HEIGHT - slot_h) // 2
+    offset_y = (canvas_h - CELL_HEIGHT) // 2
 
     for i in range(frame_count):
-        x0 = i * slot_w
-        x1 = x0 + slot_w
+        x0 = i * CELL_WIDTH
+        x1 = x0 + CELL_WIDTH
         y0 = offset_y
-        y1 = offset_y + slot_h
+        y1 = offset_y + CELL_HEIGHT
         draw.rectangle([x0, y0, x1 - 1, y1 - 1], outline=(0x11, 0x11, 0x11), width=2)
-        sx0 = x0 + margin_x
-        sy0 = y0 + margin_y
-        sx1 = x1 - margin_x
-        sy1 = y1 - margin_y
+        sx0 = x0 + SAFE_MARGIN_X
+        sy0 = y0 + SAFE_MARGIN_Y
+        sx1 = x1 - SAFE_MARGIN_X
+        sy1 = y1 - SAFE_MARGIN_Y
         draw.rectangle([sx0, sy0, sx1, sy1], outline=(0x2F, 0x80, 0xED), width=2)
-        cx = x0 + slot_w // 2
-        cy = y0 + slot_h // 2
+        cx = x0 + CELL_WIDTH // 2
+        cy = y0 + CELL_HEIGHT // 2
         draw_dashed_line(draw, (cx, sy0), (cx, sy1), (0xB8, 0xB8, 0xB8))
         draw_dashed_line(draw, (sx0, cy), (sx1, cy), (0xB8, 0xB8, 0xB8))
 
     img.save(output_path)
+    return size_str
 
 
 # ── Prompt generation ────────────────────────────────────────────────
@@ -260,10 +266,11 @@ def main():
             bundled = bundled_guides_dir / f"{fc}f.png"
             if bundled.exists():
                 shutil.copy2(bundled, dest)
-                print(f"  {fc} frames: copied from references/")
+                size_str, _, _ = compute_strip_size(fc)
+                print(f"  {fc} frames: copied from references/ ({size_str})")
             else:
-                create_layout_guide(fc, dest)
-                print(f"  {fc} frames: generated")
+                size_str = create_layout_guide(fc, dest)
+                print(f"  {fc} frames: generated ({size_str})")
             generated_guides.add(fc)
 
     # 2. Base prompt
@@ -289,12 +296,14 @@ def main():
         prompt_path.write_text(rp)
         print(f"  rows/{state_name}.md")
 
+        strip_size, _, _ = compute_strip_size(fc)
         jobs.append({
             "id": f"row-{state_name}",
             "kind": "row-strip",
             "state": state_name,
             "row": cfg["row"],
             "frames": fc,
+            "strip_size": strip_size,
             "prompt_file": f"prompts/rows/{state_name}.md",
             "output_path": f"decoded/{state_name}.png",
             "depends_on": "base",

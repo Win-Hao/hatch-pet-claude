@@ -152,7 +152,8 @@ def run_full():
                 sys.exit(1)
             images.append((ref_path.name, ref_path.read_bytes()))
 
-        url = call_edits(prompt, images, size="1536x1024")
+        strip_size = job.get("strip_size", "1536x1024")
+        url = call_edits(prompt, images, size=strip_size)
         download(url, output)
         print(f"  OK: {output}")
         completed += 1
