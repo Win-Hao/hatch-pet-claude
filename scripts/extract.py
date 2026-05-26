@@ -124,32 +124,51 @@ def find_cut_points(alpha, frame_count):
     return cuts
 
 
-def _clean_frame_edges(frame, threshold_ratio=0.15):
-    """Remove contamination from adjacent frames at left/right edges.
-    Scans inward from each edge, clearing columns whose pixel density
-    is below threshold_ratio of the frame's peak column density."""
+def _clean_frame_edges(frame):
+    """Remove contamination by keeping only the largest connected region.
+    Fists and capes are connected to the main body and are preserved.
+    Only isolated pixel fragments (contamination from adjacent frames) are removed."""
     arr = np.array(frame)
     alpha = arr[:, :, 3]
-    col_density = (alpha > 16).sum(axis=0)
+    h, w = alpha.shape
 
-    if col_density.max() == 0:
+    if alpha.max() == 0:
         return frame
 
-    threshold = col_density.max() * threshold_ratio
+    # Find all connected components
+    visited = np.zeros((h, w), dtype=bool)
+    components = []
 
-    # Clear from left edge inward
-    for x in range(len(col_density)):
-        if col_density[x] <= threshold:
-            arr[:, x, 3] = 0
-        else:
-            break
+    for y in range(h):
+        for x in range(w):
+            if visited[y, x] or alpha[y, x] <= 16:
+                continue
+            # BFS flood fill
+            queue = [(y, x)]
+            visited[y, x] = True
+            pixels = []
+            while queue:
+                cy, cx = queue.pop(0)
+                pixels.append((cy, cx))
+                for dy, dx in [(-1,0),(1,0),(0,-1),(0,1)]:
+                    ny, nx = cy+dy, cx+dx
+                    if 0 <= ny < h and 0 <= nx < w and not visited[ny, nx] and alpha[ny, nx] > 16:
+                        visited[ny, nx] = True
+                        queue.append((ny, nx))
+            components.append(pixels)
 
-    # Clear from right edge inward
-    for x in range(len(col_density) - 1, -1, -1):
-        if col_density[x] <= threshold:
-            arr[:, x, 3] = 0
-        else:
-            break
+    if not components:
+        return frame
+
+    # Keep the largest component (the character), remove everything else
+    largest = max(components, key=len)
+    largest_set = set((p[0], p[1]) for p in largest)
+
+    for comp in components:
+        if comp is largest:
+            continue
+        for y, x in comp:
+            arr[y, x, 3] = 0
 
     return Image.fromarray(arr)
 
