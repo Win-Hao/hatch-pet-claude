@@ -1,5 +1,7 @@
 # hatch-pet-claude
 
+[中文文档](README.zh-CN.md)
+
 A Claude Code skill for generating animated pixel art pet sprites. Outputs Codex-compatible 1536x1872 sprite atlases with up to 9 animation states.
 
 Adapted from [OpenAI's hatch-pet](https://github.com/openai/skills/tree/main/skills/.curated/hatch-pet) for Claude Code, with improvements for generic API support, interactive setup, and frame alignment.
