@@ -145,45 +145,54 @@ def draw_dashed_line(draw, start, end, color, width=1, dash=8, gap=6):
             x += dash + gap
 
 
-API_WIDTH = 1536
-API_HEIGHT = 1024
-STRIP_SIZE = f"{API_WIDTH}x{API_HEIGHT}"
+STRIP_SIZES = {
+    4: ("768x384", 768, 384),
+    6: ("1152x384", 1152, 384),
+    8: ("1536x512", 1536, 512),
+}
+FALLBACK_SIZE = ("1536x1024", 1536, 1024)
 
 
 def compute_strip_size(frame_count):
-    """Return the standard API output size. Uses 1536x1024 for maximum
-    compatibility across OpenAI-compatible providers."""
-    return STRIP_SIZE, API_WIDTH, API_HEIGHT
+    """Return the optimal API output size for a given frame count.
+    Uses compact custom sizes where supported; falls back to 1536x1024
+    with proportionally scaled layout guides for unsupported counts."""
+    return STRIP_SIZES.get(frame_count, FALLBACK_SIZE)
 
 
 def create_layout_guide(frame_count, output_path):
-    """Create a layout guide at 1536x1024 with proportionally scaled frame slots.
-    Slots are scaled up to fill the full canvas width (e.g., 4f=2x, 6f=1.33x, 8f=1x),
-    preserving the 192:208 aspect ratio. The visual guide constrains character placement
-    without relying on text-based prompt instructions."""
-    img = Image.new("RGB", (API_WIDTH, API_HEIGHT), (0xF7, 0xF7, 0xF7))
+    """Create a layout guide at the API output size for this frame count.
+    Custom sizes use natural cell dimensions; fallback uses proportional scaling."""
+    size_str, canvas_w, canvas_h = compute_strip_size(frame_count)
+    img = Image.new("RGB", (canvas_w, canvas_h), (0xF7, 0xF7, 0xF7))
     draw = ImageDraw.Draw(img)
 
-    scale = API_WIDTH / (frame_count * CELL_WIDTH)
-    slot_w = round(CELL_WIDTH * scale)
-    slot_h = round(CELL_HEIGHT * scale)
-    margin_x = round(SAFE_MARGIN_X * scale)
-    margin_y = round(SAFE_MARGIN_Y * scale)
-    offset_y = (API_HEIGHT - slot_h) // 2
+    natural_w = frame_count * CELL_WIDTH
+    if natural_w <= canvas_w and CELL_HEIGHT <= canvas_h:
+        slot_w = CELL_WIDTH
+        slot_h = CELL_HEIGHT
+        mx, my = SAFE_MARGIN_X, SAFE_MARGIN_Y
+        offset_x = (canvas_w - natural_w) // 2
+    else:
+        scale = canvas_w / natural_w
+        slot_w = round(CELL_WIDTH * scale)
+        slot_h = round(CELL_HEIGHT * scale)
+        mx = round(SAFE_MARGIN_X * scale)
+        my = round(SAFE_MARGIN_Y * scale)
+        offset_x = 0
+    offset_y = (canvas_h - slot_h) // 2
 
     for i in range(frame_count):
-        x0 = round(i * slot_w)
-        x1 = round((i + 1) * slot_w)
+        x0 = offset_x + i * slot_w
+        x1 = x0 + slot_w
         y0 = offset_y
         y1 = offset_y + slot_h
         draw.rectangle([x0, y0, x1 - 1, y1 - 1], outline=(0x11, 0x11, 0x11), width=2)
-        sx0 = x0 + margin_x
-        sy0 = y0 + margin_y
-        sx1 = x1 - margin_x
-        sy1 = y1 - margin_y
+        sx0, sy0 = x0 + mx, y0 + my
+        sx1, sy1 = x1 - mx, y1 - my
         draw.rectangle([sx0, sy0, sx1, sy1], outline=(0x2F, 0x80, 0xED), width=2)
         cx = (x0 + x1) // 2
-        cy = y0 + slot_h // 2
+        cy = (y0 + y1) // 2
         draw_dashed_line(draw, (cx, sy0), (cx, sy1), (0xB8, 0xB8, 0xB8))
         draw_dashed_line(draw, (sx0, cy), (sx1, cy), (0xB8, 0xB8, 0xB8))
 
