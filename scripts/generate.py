@@ -154,6 +154,7 @@ def run_full():
 
         strip_size = job.get("strip_size", "1536x1024")
         url = call_edits(prompt, images, size=strip_size)
+        # strip_size defaults to 1536x1024 for maximum API compatibility
         download(url, output)
         print(f"  OK: {output}")
         completed += 1
