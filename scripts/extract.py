@@ -51,54 +51,158 @@ def compute_centroid_x(img):
     return (alpha.sum(axis=0) * np.arange(img.width, dtype=np.float64)).sum() / total
 
 
+def find_connected_components(alpha, min_alpha=16):
+    """BFS flood-fill to find connected regions of non-transparent pixels."""
+    h, w = alpha.shape
+    visited = np.zeros((h, w), dtype=bool)
+    components = []
+
+    for y in range(h):
+        for x in range(w):
+            if visited[y, x] or alpha[y, x] <= min_alpha:
+                continue
+            # BFS
+            queue = [(y, x)]
+            visited[y, x] = True
+            pixels = []
+            min_x, max_x, min_y, max_y = x, x, y, y
+
+            while queue:
+                cy, cx = queue.pop(0)
+                pixels.append((cy, cx))
+                min_x = min(min_x, cx)
+                max_x = max(max_x, cx)
+                min_y = min(min_y, cy)
+                max_y = max(max_y, cy)
+
+                for dy, dx in [(-1,0),(1,0),(0,-1),(0,1)]:
+                    ny, nx = cy+dy, cx+dx
+                    if 0 <= ny < h and 0 <= nx < w and not visited[ny, nx] and alpha[ny, nx] > min_alpha:
+                        visited[ny, nx] = True
+                        queue.append((ny, nx))
+
+            area = len(pixels)
+            center_x = (min_x + max_x) / 2
+            components.append({
+                "area": area,
+                "bbox": (min_x, min_y, max_x + 1, max_y + 1),
+                "center_x": center_x,
+                "pixels": pixels,
+            })
+
+    return components
+
+
+def find_cut_points(alpha, frame_count):
+    """Find optimal cut points between frames using valley detection on vertical projection."""
+    h, w = alpha.shape
+    # Vertical projection: count opaque pixels per column
+    projection = (alpha > 16).sum(axis=0).astype(float)
+
+    # Smooth the projection to avoid noise
+    kernel_size = max(3, w // 100)
+    kernel = np.ones(kernel_size) / kernel_size
+    smoothed = np.convolve(projection, kernel, mode='same')
+
+    # We need frame_count - 1 cut points
+    # Search in regions around expected equal-division points
+    slot_width = w / frame_count
+    cuts = []
+
+    for i in range(1, frame_count):
+        expected = int(i * slot_width)
+        # Search window: 20% of slot width around the expected point
+        search_radius = max(10, int(slot_width * 0.2))
+        left = max(0, expected - search_radius)
+        right = min(w - 1, expected + search_radius)
+
+        # Find the column with minimum opaque pixels in this window
+        window = smoothed[left:right + 1]
+        best_offset = np.argmin(window)
+        cuts.append(left + best_offset)
+
+    return cuts
+
+
+def _clean_frame_edges(frame, threshold_ratio=0.15):
+    """Remove contamination from adjacent frames at left/right edges.
+    Scans inward from each edge, clearing columns whose pixel density
+    is below threshold_ratio of the frame's peak column density."""
+    arr = np.array(frame)
+    alpha = arr[:, :, 3]
+    col_density = (alpha > 16).sum(axis=0)
+
+    if col_density.max() == 0:
+        return frame
+
+    threshold = col_density.max() * threshold_ratio
+
+    # Clear from left edge inward
+    for x in range(len(col_density)):
+        if col_density[x] <= threshold:
+            arr[:, x, 3] = 0
+        else:
+            break
+
+    # Clear from right edge inward
+    for x in range(len(col_density) - 1, -1, -1):
+        if col_density[x] <= threshold:
+            arr[:, x, 3] = 0
+        else:
+            break
+
+    return Image.fromarray(arr)
+
+
 def extract_strip_frames(strip_path, frame_count, chroma_hex):
     strip = Image.open(strip_path).convert("RGBA")
     strip = remove_chroma(strip, chroma_hex)
     w, h = strip.size
-    slot_width = w // frame_count
+    alpha = np.array(strip)[:, :, 3]
 
-    slots = []
-    all_tops, all_bottoms = [], []
-    for i in range(frame_count):
-        slot = strip.crop((i * slot_width, 0, (i + 1) * slot_width, h))
-        bbox = slot.getbbox()
-        if bbox:
-            all_tops.append(bbox[1])
-            all_bottoms.append(bbox[3])
-        slots.append(slot)
+    # Find optimal cut points using valley detection
+    cuts = find_cut_points(alpha, frame_count)
+    boundaries = [0] + cuts + [w]
 
-    if not all_tops:
+    # Find shared vertical bounds
+    bbox = strip.getbbox()
+    if not bbox:
         return []
+    shared_top = bbox[1]
+    shared_bottom = bbox[3]
 
-    shared_top = min(all_tops)
-    shared_bottom = max(all_bottoms)
+    # Extract frames at cut points with edge cleanup
+    frame_images = []
+    for i in range(frame_count):
+        left = boundaries[i]
+        right = boundaries[i + 1]
+        frame = strip.crop((left, shared_top, right, shared_bottom))
+        frame = _clean_frame_edges(frame)
+        frame_images.append(frame)
 
-    cropped_slots = []
-    centroids = []
-    for slot in slots:
-        cropped = slot.crop((0, shared_top, slot_width, shared_bottom))
-        centroids.append(compute_centroid_x(cropped))
-        cropped_slots.append(cropped)
-
-    max_w = CELL_WIDTH - 10
-    max_h = CELL_HEIGHT - 10
-    viewport_h = shared_bottom - shared_top
-    scale = min(max_w / slot_width, max_h / viewport_h, 1.0)
+    # Fit frames to cells with centroid alignment
+    max_fw = max(f.width for f in frame_images if f.width > 0)
+    max_fh = max(f.height for f in frame_images if f.height > 0)
+    max_cw = CELL_WIDTH - 10
+    max_ch = CELL_HEIGHT - 10
+    scale = min(max_cw / max_fw, max_ch / max_fh, 1.0)
 
     cells = []
-    for cropped, cx in zip(cropped_slots, centroids):
+    for frame in frame_images:
+        cx = compute_centroid_x(frame)
+
         if scale < 1.0:
-            new_w = max(1, round(cropped.width * scale))
-            new_h = max(1, round(cropped.height * scale))
-            cropped = cropped.resize((new_w, new_h), Image.NEAREST)
+            new_w = max(1, round(frame.width * scale))
+            new_h = max(1, round(frame.height * scale))
+            frame = frame.resize((new_w, new_h), Image.NEAREST)
             scaled_cx = cx * scale
         else:
             scaled_cx = cx
 
         canvas = Image.new("RGBA", (CELL_WIDTH, CELL_HEIGHT), (0, 0, 0, 0))
         place_x = round(CELL_WIDTH / 2 - scaled_cx)
-        place_y = (CELL_HEIGHT - cropped.height) // 2
-        canvas.paste(cropped, (place_x, place_y), cropped)
+        place_y = (CELL_HEIGHT - frame.height) // 2
+        canvas.paste(frame, (place_x, place_y), frame)
         cells.append(canvas)
 
     return cells

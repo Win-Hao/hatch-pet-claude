@@ -188,7 +188,7 @@ def row_prompt(pet, state_name, state_cfg, chroma_name, chroma_hex, style_contra
 
 Use the attached canonical base for identity. Use the attached layout guide only for slot count, spacing, centering, and padding; do not draw the guide.
 
-Output exactly {frames} full-body frames in one left-to-right row on flat pure {chroma_name} {chroma_hex}. Treat the row as {frames} invisible equal-width slots: one centered complete pose per slot, evenly spaced, with no overlap, clipping, empty slots, labels, or borders.
+Output exactly {frames} full-body frames in one left-to-right row on flat pure {chroma_name} {chroma_hex}. Treat the row as {frames} invisible equal-width slots: one centered complete pose per slot. CRITICAL SPACING: each character must be fully contained within its slot with clear {chroma_name} gaps between adjacent characters. No character, limb, cape, hair, prop, or any part may touch or overlap with an adjacent slot. Leave at least 10% of each slot width as empty padding on both sides.
 
 Identity: same pet in every frame: {pet['description']}. Preserve silhouette, face, proportions, markings, palette, material, style, and props.
 Style: {style_contract}
