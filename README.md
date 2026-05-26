@@ -15,8 +15,8 @@ pet.json → prepare.py → generate.py --preview → generate.py → extract.py
   (you)      (free)        (~$0.04)              (~$0.40)       (free)        (done!)
 ```
 
-1. **You describe** your pet in plain language
-2. **Claude asks** about style, quality, animation states
+1. **You describe** your pet in plain language (optionally provide a reference image)
+2. **Claude asks** about style, quality, animation states, API config
 3. **Preview** generates 1 image for approval (~$0.04 with medium quality)
 4. **Generate** creates all animation frame strips using the approved base as reference
 5. **Extract** removes backgrounds, aligns frames, builds the final atlas
@@ -71,6 +71,7 @@ python3 scripts/extract.py             # Free: atlas + preview GIFs
   "description": "A cute pixel art robot cat with glowing blue eyes, round head, small mechanical ears, and a short antenna.",
   "style": "pixel",
   "quality": "medium",
+  "reference_image": null,
   "chroma_key": "auto",
   "states": ["idle", "running-right", "waving", "jumping", "failed", "waiting", "running", "review"],
   "derive_running_left": true

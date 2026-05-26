@@ -88,11 +88,25 @@ def run_preview():
         return
 
     prompt = (RUN_DIR / base_job["prompt_file"]).read_text()
-    print(f"Generating preview for: {manifest['pet']['displayName']}")
-    print(f"Style: {manifest['pet'].get('style', 'auto')}")
-    print(f"Cost: ~$0.17\n")
+    pet = manifest["pet"]
+    ref_image = pet.get("reference_image")
 
-    url = call_generations(prompt)
+    print(f"Generating preview for: {pet['displayName']}")
+    print(f"Style: {pet.get('style', 'auto')}")
+    if ref_image:
+        print(f"Reference image: {ref_image}")
+    print(f"Cost: ~$0.04 (medium) / ~$0.17 (high)\n")
+
+    if ref_image:
+        ref_path = SKILL_DIR / ref_image
+        if not ref_path.exists():
+            print(f"ERROR: Reference image not found: {ref_path}")
+            sys.exit(1)
+        ref_bytes = ref_path.read_bytes()
+        url = call_edits(prompt, [("reference.png", ref_bytes)])
+    else:
+        url = call_generations(prompt)
+
     download(url, output)
 
     print(f"Preview saved: {output}")

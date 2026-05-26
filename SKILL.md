@@ -33,14 +33,27 @@ Ask the user these questions one at a time (or grouped if natural):
    - `running` — Working/processing (not foot-running)
    - `review` — Inspecting output
 
+## Step 1.5: Reference Image (Optional)
+
+Ask: "Do you have a reference image (screenshot, sketch, existing character art)? This helps the AI match a specific look."
+
+If yes:
+- Ask the user to provide the image path
+- Save it to `run/references/user-reference.png`
+- Set `"reference_image": "run/references/user-reference.png"` in pet.json
+- During preview, this image will be passed to the AI edits endpoint alongside the text prompt
+
+If no: skip, text-only generation works fine.
+
 ## Step 2: Configure API
 
-Ask the user: "Which image generation API do you want to use?"
-- **OpenAI** (api.openai.com) — cheapest, direct pricing
-- **302.AI** (api.302.ai) — Chinese-friendly, has markup
-- **Other OpenAI-compatible** — ask for base URL
+Ask the user: "Which image generation API do you want to use? You need an OpenAI-compatible API that supports GPT-Image-2."
 
-Then ask for their API key. **Never log, display, or commit the API key.**
+Ask for:
+1. **Base URL** (e.g., `https://api.openai.com` or any OpenAI-compatible endpoint)
+2. **API Key**
+
+**Never log, display, or commit the API key.** When confirming, mask it (e.g., `sk-...xxxx`).
 
 Write the `.env` file:
 ```
@@ -58,6 +71,7 @@ Based on collected answers, write `pet.json`:
   "name": "<kebab-case-name>",
   "displayName": "<Display Name>",
   "description": "<their character description, enriched with visual details>",
+  "reference_image": null,
   "style": "<chosen style>",
   "quality": "<medium or high>",
   "chroma_key": "auto",
