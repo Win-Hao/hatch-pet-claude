@@ -164,6 +164,10 @@ The atlas follows the [Codex pet contract](https://github.com/openai/skills/blob
 
 **Character looks different across states** — All strips use the base image as identity reference. If the base is unclear or too small, regenerate it with a more detailed description.
 
+**Characters too close / cropping contamination** — The AI sometimes packs characters too tightly. Delete the strip and regenerate (API randomness means the next attempt often has better spacing). Medium quality is only ~$0.05 per strip.
+
+**Do NOT pass example strips as reference images** — The edits endpoint cannot distinguish image roles. Passing another character's strip will pollute the output (copied appearance, mixed poses). Only the canonical base and layout guide should be used as references.
+
 ## Credits
 
 - Pipeline design: [OpenAI hatch-pet](https://github.com/openai/skills/tree/main/skills/.curated/hatch-pet)

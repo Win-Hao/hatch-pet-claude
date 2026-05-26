@@ -179,6 +179,10 @@ output/
 
 **角色不一致** — 所有帧带都以基准图为身份参考。如果基准图模糊或太小，请用更详细的描述重新生成预览。
 
+**角色太紧/裁切污染** — AI 有时会把角色排得太密。删掉该帧带重新生成即可（API 有随机性，下次间距通常更好）。medium 质量每条帧带仅约 ¥0.35。
+
+**不要传范例帧带作为参考图** — edits 端点无法区分图片用途，传入其他角色的帧带会污染输出（抄外观、混动作）。只应传入 canonical base 和 layout guide。
+
 ## 致谢
 
 - 流水线设计：[OpenAI hatch-pet](https://github.com/openai/skills/tree/main/skills/.curated/hatch-pet)

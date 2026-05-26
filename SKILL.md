@@ -135,10 +135,12 @@ Show the preview GIFs to the user so they can see each animation state in action
 
 ## Step 8: Quality Check
 
-If any animation state has visible issues (frame drift, character inconsistency):
+If any animation state has visible issues (frame drift, character inconsistency, characters too close):
 1. Delete the specific strip: `rm run/decoded/<state>.png`
 2. Re-run `python3 scripts/generate.py` (only regenerates the missing strip)
 3. Re-run `python3 scripts/extract.py`
+
+The API has randomness — regenerating often produces better spacing on the next attempt. Medium quality costs only ~$0.05 per strip, so retrying is cheap.
 
 ## Important Notes
 
@@ -147,6 +149,7 @@ If any animation state has visible issues (frame drift, character inconsistency)
 - **Cost awareness**: Always tell the user the estimated cost before any API call
 - **Skip existing**: The generate script skips already-created files. Safe to re-run.
 - **Dependencies**: Ensure `Pillow`, `numpy`, `httpx` are installed before running scripts
+- **Do NOT pass example strips as reference images** — the edits API treats all images as visual references without role distinction. Passing another character's strip will pollute the output (copied poses, mixed visual elements). Only the canonical base and layout guide should be used as references.
 
 ## File Reference
 
