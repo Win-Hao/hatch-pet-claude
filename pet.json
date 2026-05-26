@@ -1,0 +1,19 @@
+{
+  "name": "my-pet",
+  "displayName": "My Pet",
+  "description": "A cute pixel art robot cat with glowing blue eyes, round head, small mechanical ears, and a short antenna. Compact chibi body with stubby paws and a curled wire tail.",
+  "style": "pixel",
+  "quality": "medium",
+  "chroma_key": "auto",
+  "states": [
+    "idle",
+    "running-right",
+    "waving",
+    "jumping",
+    "failed",
+    "waiting",
+    "running",
+    "review"
+  ],
+  "derive_running_left": true
+}
