@@ -1,0 +1,15 @@
+{
+  "name": "dark-knight",
+  "displayName": "Dark Knight",
+  "description": "A chibi pixel art dark armored knight with black full plate armor, horned helmet, glowing red eyes, long dark cape, and a golden sword on back.",
+  "style": "pixel",
+  "quality": "low",
+  "chroma_key": "#00FFFF",
+  "states": [
+    "idle",
+    "running-right",
+    "waving",
+    "failed"
+  ],
+  "derive_running_left": true
+}

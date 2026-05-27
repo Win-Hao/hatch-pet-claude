@@ -6,15 +6,15 @@
 
 基于 [OpenAI hatch-pet](https://github.com/openai/skills/tree/main/skills/.curated/hatch-pet) 改编，适配 Claude Code，支持任意 OpenAI 兼容的图片生成 API。
 
+> **⚠️ 重要：本技能仅对 GPT-Image-2 适配最好。** GPT-Image-2 是唯一能在一张图中精确绘制多个动画帧的模型。其他模型（Kling、DALL-E 3、Flux、Stable Diffusion 等）无法理解"水平排列 N 个角色帧"的指令，生成效果不可用。
+
 ![Pipeline](https://img.shields.io/badge/流水线-准备→预览→生成→提取-blue)
 ![Cost](https://img.shields.io/badge/费用-约¥3(medium)-green)
 ![Atlas](https://img.shields.io/badge/图集-1536x1872-orange)
 
 ## 示例
 
-> 从一张参考图生成完整的像素风动画精灵图集，5 次 API 调用，费用约 ¥1.8
-
-**Homelander** — 基于参考图生成，pixel 风格，medium 质量
+### Homelander — pixel 风格，medium 质量
 
 | 基准形象 | 精灵图集 |
 |---------|---------|
@@ -23,6 +23,16 @@
 | idle | running | waving | failed |
 |------|---------|--------|--------|
 | <img src="examples/homelander/previews/idle.gif" width="80"> | <img src="examples/homelander/previews/running-right.gif" width="80"> | <img src="examples/homelander/previews/waving.gif" width="80"> | <img src="examples/homelander/previews/failed.gif" width="80"> |
+
+### Dark Knight — pixel 风格，low 质量（智能选色：自动从 magenta 切换到 cyan）
+
+| 基准形象 | 精灵图集 |
+|---------|---------|
+| <img src="examples/dark-knight/base.png" width="120"> | <img src="examples/dark-knight/spritesheet.png" width="400"> |
+
+| idle | running | waving | failed |
+|------|---------|--------|--------|
+| <img src="examples/dark-knight/previews/idle.gif" width="80"> | <img src="examples/dark-knight/previews/running-right.gif" width="80"> | <img src="examples/dark-knight/previews/waving.gif" width="80"> | <img src="examples/dark-knight/previews/failed.gif" width="80"> |
 
 ## 工作原理
 
@@ -46,7 +56,9 @@ pet.json → prepare.py → generate.py --preview → generate.py → extract.py
 - **质心对齐** — 自动补偿通用 API 的帧定位偏差
 - **镜像派生** — 向左跑自动从向右跑镜像生成（省 1 次 API 调用）
 - **Codex 兼容** — 输出可直接用于 [petdex](https://github.com/crafter-station/petdex) 等 Codex 宠物渲染器
-- **任意 API** — 支持 OpenAI 官方或任何 OpenAI 兼容端点
+- **智能选色** — 自动检测角色颜色与抠图背景的冲突，自动切换到安全的 chroma key 颜色
+- **多角色共存** — 每个角色独立目录，无需清理即可创建多个角色
+- **任意 API** — 支持 OpenAI 官方或任何 OpenAI 兼容端点（需支持 GPT-Image-2）
 
 ## 快速开始
 
@@ -64,19 +76,20 @@ cp -r hatch-pet-claude ~/.claude/skills/hatch-pet
 
 ```bash
 # 1. 安装依赖
-pip install Pillow numpy httpx python-dotenv
+pip install Pillow numpy httpx python-dotenv PyJWT
 
-# 2. 配置 API
+# 2. 配置 API（在你的工作目录下）
 cp .env.example .env
 # 编辑 .env 填入你的 API key 和 base URL
 
-# 3. 编辑 pet.json 定义你的角色
+# 3. 创建角色目录并编辑 pet.json
+mkdir my-pet && vi my-pet/pet.json
 
-# 4. 运行流水线
-python3 scripts/prepare.py              # 免费：生成布局引导图和提示词
-python3 scripts/generate.py --preview   # ~¥0.3：生成预览图供确认
-python3 scripts/generate.py             # ~¥3：生成全部动画帧带
-python3 scripts/extract.py             # 免费：提取帧、组装图集、生成预览 GIF
+# 4. 运行流水线（脚本路径指向 skill 目录）
+python3 <skill-dir>/scripts/prepare.py ./my-pet
+python3 <skill-dir>/scripts/generate.py ./my-pet --preview
+python3 <skill-dir>/scripts/generate.py ./my-pet
+python3 <skill-dir>/scripts/extract.py ./my-pet
 ```
 
 ## pet.json 配置
@@ -103,7 +116,7 @@ python3 scripts/extract.py             # 免费：提取帧、组装图集、生
 | `style` | 视觉风格（见下方风格列表） |
 | `quality` | `medium`（默认，全套约 ¥3）或 `high`（全套约 ¥13） |
 | `reference_image` | 可选的参考图路径（截图、草图等），设为 `null` 表示纯文字生成 |
-| `chroma_key` | 抠图用的背景色，`auto` 自动选择洋红色 |
+| `chroma_key` | 抠图用的背景色，`auto` 自动选择（预览后智能检测冲突并切换） |
 | `states` | 需要生成的动画状态列表 |
 | `derive_running_left` | 设为 `true` 时，向左跑从向右跑镜像生成（省 1 次 API） |
 
@@ -148,14 +161,15 @@ python3 scripts/extract.py             # 免费：提取帧、组装图集、生
 ## 输出文件
 
 ```
-output/
+my-pet/
+├── pet.json              # 角色配置
 ├── spritesheet.png       # 完整图集 1536x1872，透明背景
 ├── spritesheet.webp      # WebP 格式
-├── pet.json              # 宠物元数据
-└── previews/
-    ├── idle.gif          # 各状态的动画预览
-    ├── running-right.gif
-    └── ...
+├── previews/
+│   ├── idle.gif          # 各状态的动画预览
+│   ├── running-right.gif
+│   └── ...
+└── .hatch/               # 中间文件（可 gitignore）
 ```
 
 图集遵循 [Codex 宠物规范](https://github.com/openai/skills/blob/main/skills/.curated/hatch-pet/references/codex-pet-contract.md)：8 列 x 9 行，每帧 192x208 像素。

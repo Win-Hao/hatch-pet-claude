@@ -6,15 +6,15 @@ A Claude Code skill for generating animated pixel art pet sprites. Outputs Codex
 
 Adapted from [OpenAI's hatch-pet](https://github.com/openai/skills/tree/main/skills/.curated/hatch-pet) for Claude Code, with improvements for generic API support, interactive setup, and frame alignment.
 
+> **⚠️ Important: This skill works best with GPT-Image-2 only.** GPT-Image-2 is the only model that can reliably draw multiple animation frames in a single horizontal strip image. Other models (Kling, DALL-E 3, Flux, Stable Diffusion, etc.) cannot understand "draw N characters in a row" and will produce unusable output.
+
 ![Pipeline](https://img.shields.io/badge/pipeline-prepare→preview→generate→extract-blue)
 ![Cost](https://img.shields.io/badge/cost-~%240.44%20(medium)-green)
 ![Atlas](https://img.shields.io/badge/atlas-1536x1872-orange)
 
-## Example
+## Examples
 
-> From a reference image to a full animated sprite atlas in 5 API calls (~$0.25)
-
-**Homelander** — generated from reference image, pixel style, medium quality
+### Homelander — pixel style, medium quality
 
 | Base | Sprite Atlas |
 |------|-------------|
@@ -23,6 +23,16 @@ Adapted from [OpenAI's hatch-pet](https://github.com/openai/skills/tree/main/ski
 | idle | running | waving | failed |
 |------|---------|--------|--------|
 | <img src="examples/homelander/previews/idle.gif" width="80"> | <img src="examples/homelander/previews/running-right.gif" width="80"> | <img src="examples/homelander/previews/waving.gif" width="80"> | <img src="examples/homelander/previews/failed.gif" width="80"> |
+
+### Dark Knight — pixel style, low quality (smart chroma: auto-switched from magenta to cyan)
+
+| Base | Sprite Atlas |
+|------|-------------|
+| <img src="examples/dark-knight/base.png" width="120"> | <img src="examples/dark-knight/spritesheet.png" width="400"> |
+
+| idle | running | waving | failed |
+|------|---------|--------|--------|
+| <img src="examples/dark-knight/previews/idle.gif" width="80"> | <img src="examples/dark-knight/previews/running-right.gif" width="80"> | <img src="examples/dark-knight/previews/waving.gif" width="80"> | <img src="examples/dark-knight/previews/failed.gif" width="80"> |
 
 ## How It Works
 
@@ -45,7 +55,9 @@ pet.json → prepare.py → generate.py --preview → generate.py → extract.py
 - **Centroid alignment** — compensates for positioning imprecision in generic image APIs
 - **Mirror derivation** — running-left auto-generated from running-right (saves 1 API call)
 - **Codex-compatible output** — works with [petdex](https://github.com/crafter-station/petdex) and any Codex pet renderer
-- **Any OpenAI-compatible API** — OpenAI, 302.AI, or any compatible endpoint
+- **Smart chroma key** — auto-detects color conflicts between character and background, switches to a safe extraction color
+- **Multi-pet support** — each pet gets its own directory, no cleanup between characters
+- **Any OpenAI-compatible API** — OpenAI or any compatible endpoint (must support GPT-Image-2)
 
 ## Quick Start
 
@@ -133,14 +145,15 @@ Prices are OpenAI direct. API proxies may add markup.
 ## Output
 
 ```
-output/
+my-pet/
+├── pet.json              # Pet config
 ├── spritesheet.png       # Full atlas 1536x1872, transparent background
 ├── spritesheet.webp      # Same in WebP
-├── pet.json              # Metadata
-└── previews/
-    ├── idle.gif          # Animation preview per state
-    ├── running-right.gif
-    └── ...
+├── previews/
+│   ├── idle.gif          # Animation preview per state
+│   ├── running-right.gif
+│   └── ...
+└── .hatch/               # Working files (can gitignore)
 ```
 
 The atlas follows the [Codex pet contract](https://github.com/openai/skills/blob/main/skills/.curated/hatch-pet/references/codex-pet-contract.md): 8 columns x 9 rows, 192x208 pixels per cell.
