@@ -17,37 +17,67 @@ allowed-tools: >
 
 # Hatch Pet
 
-Guide the user through generating an animated pet sprite. Follow these steps in order.
-Ask questions interactively — never ask the user to edit files manually.
+Generate animated pet sprites through a guided conversation. Follow these steps in order.
 
-Each pet gets its own directory in the user's working directory. No cleanup needed
-between characters — just run the pipeline again for a new pet.
+## Step 0 — Show what's possible
 
-## Step 1 — Collect pet info
+Start by showing the user an example so they know what to expect.
+Read and display one of the example preview GIFs: `${CLAUDE_SKILL_DIR}/examples/homelander/previews/idle.gif`
 
-Gather these details (group naturally, don't interrogate):
+Tell the user something like:
+> Here's an example of what this skill produces — an animated pixel art character with multiple states (idle, running, waving, etc.). Let's create yours!
 
-1. **Character description** — what does it look like?
-2. **Name** → derive directory name (kebab-case) and `displayName`
-3. **Style** — see [references/style-presets.md](references/style-presets.md) for options. Default: `pixel`
-4. **Quality** — `medium` (recommended, ~$0.25 for 4 states) or `high` (~$1.00)
-5. **Animation states** — see [references/animation-rows.md](references/animation-rows.md) for the full list. Default: `idle`, `running-right`, `waving`, `failed`
+## Step 1 — What character?
 
-## Step 2 — Reference image (optional)
+Ask the user to describe their character. If they provide a reference image, save it as
+`<pet-name>/reference.<ext>` (this helps the AI match the look).
 
-Ask if they have a reference image. If yes, save it as `<pet-name>/reference.<ext>`.
+Then ask for a **name** — this becomes the directory name (kebab-case).
 
-## Step 3 — API credentials
+## Step 2 — Pick a style
 
-This skill requires **GPT-Image-2** — it's the only model that can reliably draw multiple
-animation frames in a single horizontal strip image. Other models (Kling, DALL-E 3, Flux, etc.)
-cannot do this and will produce unusable output.
+Show these options and ask the user to pick one:
 
-Check if `.env` exists in the working directory. If not, ask for:
-- **Base URL** (OpenAI-compatible endpoint supporting GPT-Image-2, e.g. `https://api.openai.com`)
-- **API Key** — never log, display, or commit it. Mask when confirming (`sk-...xxxx`).
+| Style | Look |
+|-------|------|
+| **pixel** | Chunky pixel art with dark outlines and flat shading (recommended) |
+| **plush** | Soft plush toy with stitched details |
+| **clay** | Handmade clay figure, rounded and tactile |
+| **sticker** | Bold shapes, crisp outlines, flat colors |
+| **flat-vector** | Simple geometric forms, clean and minimal |
+| **3d-toy** | Smooth 3D toy with simple materials |
+| **painterly** | Brush texture, painterly feel |
 
-Write `.env` in the working directory:
+Default to `pixel` if the user doesn't have a preference.
+
+## Step 3 — Pick quality and states
+
+Ask: "Medium quality is recommended (~$0.25 for the full set). Low is cheaper (~$0.06) but less detailed. Which do you prefer?"
+
+For animation states, suggest the default set and ask if they want to add or remove any:
+- `idle` — Breathing/blinking resting loop
+- `running-right` — Moving rightward (running-left auto-mirrored)
+- `waving` — Greeting gesture
+- `failed` — Sad/slumped reaction
+
+Additional states available: `jumping`, `waiting`, `running` (working/processing), `review`.
+
+## Step 4 — Check dependencies and API
+
+First, check that Python dependencies are installed:
+```bash
+python3 -c "import PIL, numpy, httpx" 2>&1 || pip3 install Pillow numpy httpx
+```
+
+Then check if `.env` exists in the working directory. If not, tell the user:
+
+> This skill needs an OpenAI-compatible API with **GPT-Image-2** support. That's the only model
+> that can draw multiple animation frames in a single image.
+>
+> I'll need your **API Base URL** and **API Key**. (Your key will be stored locally in `.env`
+> and never committed or displayed.)
+
+Write `.env`:
 ```
 HATCH_PET_PROVIDER=openai
 HATCH_PET_API_KEY=<key>
@@ -55,9 +85,14 @@ HATCH_PET_BASE_URL=<url>
 HATCH_PET_MODEL=gpt-image-2
 ```
 
-## Step 4 — Create pet directory and config
+**Never log, display, or commit the API key.** Mask it when confirming (`sk-...xxxx`).
 
-Create `<pet-name>/pet.json`:
+## Step 5 — Create pet config
+
+Create `<pet-name>/pet.json` based on the user's answers. Enrich the user's character
+description with specific visual details that help image generation — proportions
+(e.g., "2.5 head-to-body ratio"), colors, materials, key features. Keep it one paragraph.
+
 ```json
 {
   "name": "<kebab-case>",
@@ -71,57 +106,65 @@ Create `<pet-name>/pet.json`:
 }
 ```
 
-Enrich the user's description with specific visual details: proportions (e.g., "2.5 head-to-body ratio"), colors, materials, key features. One paragraph.
-
-## Step 5 — Prepare (free)
+## Step 6 — Prepare (free)
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/prepare.py ./<pet-name>
 ```
 
-Show the summary. Confirm cost with the user before any API call.
+Show the summary and estimated cost. Ask the user to confirm before spending money:
+> This will cost approximately $X.XX. Ready to start?
 
-## Step 6 — Preview (~$0.04 medium)
+## Step 7 — Preview
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/generate.py ./<pet-name> --preview
 ```
 
-Show the base image to the user. If not satisfied:
+Show the generated base image to the user and ask:
+> Does this look like what you want? I can regenerate if you'd like changes.
+
+If not satisfied, delete the preview, adjust the prompt, and re-run:
 1. `rm <pet-name>/.hatch/decoded/base.png`
-2. Adjust `<pet-name>/.hatch/prompts/base.md`
+2. Edit `<pet-name>/.hatch/prompts/base.md` based on feedback
 3. Re-run `--preview`
 
-## Step 7 — Generate all strips
+## Step 8 — Generate all strips
 
+After the user approves the preview:
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/generate.py ./<pet-name>
 ```
 
 Safe to re-run — completed strips are skipped.
 
-## Step 8 — Extract and build atlas (free)
+## Step 9 — Extract and build atlas (free)
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/extract.py ./<pet-name>
 ```
 
-Show the preview GIFs to the user.
+Show the preview GIFs to the user so they can see each animation in action.
 
-## Step 9 — Quality check
+## Step 10 — Quality check
 
-If any state has issues (frame drift, inconsistency):
+If any animation state looks off (frame drift, inconsistency, characters too close):
 1. `rm <pet-name>/.hatch/decoded/<state>.png`
 2. Re-run generate.py then extract.py
 
-Retries often improve quality due to API randomness. ~$0.05 per strip at medium.
+The API is non-deterministic — retries often produce better results.
+
+After the user is happy, let them know their files are in `<pet-name>/`:
+> Your sprite atlas is ready at `<pet-name>/spritesheet.png` (and `.webp`).
+> Preview GIFs for each animation are in `<pet-name>/previews/`.
+> Want to create another character?
 
 ## Rules
 
 - **Never commit `.env`**
 - **Cost awareness** — always confirm cost before API calls
 - **No example strips as reference** — only the canonical base and layout guide should be passed to the edits API
-- Ensure `Pillow`, `numpy`, `httpx` are installed before running scripts
+- Each pet gets its own directory — no cleanup needed between characters
 
 ## User's directory structure
 
@@ -135,17 +178,11 @@ working-directory/
 │   ├── spritesheet.webp
 │   ├── previews/                 # Animation preview GIFs
 │   └── .hatch/                   # Working files (can gitignore)
-│       ├── jobs.json
-│       ├── prompts/
-│       ├── decoded/
-│       ├── layout-guides/
-│       └── frames/
 └── homelander/
     └── ...
 ```
 
 ## Additional resources
 
-- [references/style-presets.md](references/style-presets.md) — visual style options
 - [references/animation-rows.md](references/animation-rows.md) — atlas row spec with frame counts and durations
 - [references/cost-reference.md](references/cost-reference.md) — per-image pricing
