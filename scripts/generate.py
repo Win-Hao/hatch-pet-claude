@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Step 2: Generate images via OpenAI-compatible API.
+"""Step 2: Generate images via image generation API.
+
+Supports: OpenAI-compatible APIs, Kling AI (可灵)
 
 Usage:
-    python3 scripts/generate.py --preview    # Only the base pet (~$0.17)
-    python3 scripts/generate.py              # Everything else (after preview approved)
+    python3 generate.py <pet-dir> --preview    # Only the base pet
+    python3 generate.py <pet-dir>              # Everything else
 """
 
 import httpx
@@ -11,120 +13,313 @@ import json
 import os
 import time
 import sys
+import base64
 from pathlib import Path
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
+SCRIPT_DIR = Path(__file__).parent
 
-SKILL_DIR = Path(__file__).parent.parent
-RUN_DIR = SKILL_DIR / "run"
 
-API_KEY = os.environ.get("HATCH_PET_API_KEY")
-BASE_URL = os.environ.get("HATCH_PET_BASE_URL", "https://api.openai.com")
-MODEL = os.environ.get("HATCH_PET_MODEL", "gpt-image-2")
+# ── .env loading ─────────────────────────────────────────────────
 
+def load_env():
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+    cwd = Path.cwd()
+    for p in [cwd] + list(cwd.parents):
+        env_file = p / ".env"
+        if env_file.exists():
+            for line in env_file.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip())
+            break
+
+load_env()
+
+PROVIDER = os.environ.get("HATCH_PET_PROVIDER", "openai")
 QUALITY = "medium"
 
-if not API_KEY:
-    print("ERROR: HATCH_PET_API_KEY not set.")
-    print("Set it via environment variable or .env file. See SKILL.md for details.")
-    sys.exit(1)
 
+# ── Kling AI client ─────────────────────────────────────────────
 
-def call_generations(prompt, size="1024x1024"):
-    client = httpx.Client(timeout=httpx.Timeout(300.0))
-    resp = client.post(
-        f"{BASE_URL}/v1/images/generations?response_format=url",
-        json={"model": MODEL, "prompt": prompt, "size": size,
-              "n": 1, "quality": QUALITY, "output_format": "png", "moderation": "low"},
-        headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-    )
-    resp.raise_for_status()
-    return resp.json()["data"][0]["url"]
+class KlingClient:
+    def __init__(self):
+        self.ak = os.environ.get("HATCH_PET_AK", "")
+        self.sk = os.environ.get("HATCH_PET_SK", "")
+        self.base_url = os.environ.get(
+            "HATCH_PET_BASE_URL", "https://api-beijing.klingai.com"
+        )
+        self.model = os.environ.get("HATCH_PET_MODEL", "kling-v1-5")
+        if not self.ak or not self.sk:
+            print("ERROR: HATCH_PET_AK and HATCH_PET_SK required for Kling provider.")
+            sys.exit(1)
 
+    def _token(self):
+        import jwt
+        headers = {"alg": "HS256", "typ": "JWT"}
+        payload = {
+            "iss": self.ak,
+            "exp": int(time.time()) + 1800,
+            "nbf": int(time.time()) - 5,
+        }
+        return jwt.encode(payload, self.sk, headers=headers)
 
-def call_edits(prompt, images, size="1024x1024", retries=2):
-    for attempt in range(retries + 1):
-        try:
-            client = httpx.Client(timeout=httpx.Timeout(300.0))
-            files = [("image", (n, b, "image/png")) for n, b in images]
-            resp = client.post(
-                f"{BASE_URL}/v1/images/edits?response_format=url",
-                data={"model": MODEL, "prompt": prompt, "size": size,
-                      "n": "1", "quality": QUALITY, "output_format": "png"},
-                files=files,
-                headers={"Authorization": f"Bearer {API_KEY}"},
-            )
+    def _headers(self):
+        return {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self._token()}",
+        }
+
+    def _poll_task(self, task_id, timeout=300, endpoint="generations"):
+        url = f"{self.base_url}/v1/images/{endpoint}/{task_id}"
+        start = time.time()
+        while time.time() - start < timeout:
+            resp = httpx.get(url, headers=self._headers(), timeout=30)
             resp.raise_for_status()
-            return resp.json()["data"][0]["url"]
-        except (httpx.ReadTimeout, httpx.RemoteProtocolError):
-            if attempt < retries:
-                print(f"  TIMEOUT (attempt {attempt+1}/{retries+1}), retrying in 5s...")
-                time.sleep(5)
-            else:
-                raise
+            result = resp.json()
+            data = result.get("data", {})
+            status = data.get("task_status", "")
+            if status in ("succeed", "SUCCEEDED"):
+                images = data.get("task_result", {}).get("images", [])
+                if images:
+                    return images[0].get("url")
+                raise ValueError(f"Task succeeded but no images: {result}")
+            if status in ("failed", "FAILED"):
+                raise RuntimeError(f"Kling task failed: {result}")
+            print(f"  Polling... status={status}")
+            time.sleep(5)
+        raise TimeoutError(f"Kling task {task_id} timed out after {timeout}s")
+
+    def generate(self, prompt, aspect_ratio="1:1"):
+        url = f"{self.base_url}/v1/images/generations"
+        body = {
+            "model_name": self.model,
+            "prompt": prompt,
+            "n": 1,
+            "aspect_ratio": aspect_ratio,
+        }
+        resp = httpx.post(url, json=body, headers=self._headers(), timeout=30)
+        resp.raise_for_status()
+        result = resp.json()
+        task_id = result.get("data", {}).get("task_id")
+        if not task_id:
+            raise ValueError(f"No task_id in response: {result}")
+        print(f"  Task created: {task_id}")
+        return self._poll_task(task_id)
+
+    def edit(self, prompt, images_data, aspect_ratio="1:1", **kwargs):
+        if len(images_data) >= 2:
+            return self._edit_multi(prompt, images_data, aspect_ratio)
+        return self._edit_single(prompt, images_data, aspect_ratio)
+
+    def _edit_single(self, prompt, images_data, aspect_ratio):
+        url = f"{self.base_url}/v1/images/generations"
+        b64 = base64.b64encode(images_data[0][1]).decode()
+        body = {
+            "model_name": self.model,
+            "prompt": prompt,
+            "image": b64,
+            "image_reference": "subject",
+            "n": 1,
+            "aspect_ratio": aspect_ratio,
+        }
+        resp = httpx.post(url, json=body, headers=self._headers(), timeout=30)
+        if resp.status_code != 200:
+            print(f"  API error: {resp.text[:300]}")
+        resp.raise_for_status()
+        result = resp.json()
+        task_id = result.get("data", {}).get("task_id")
+        if not task_id:
+            raise ValueError(f"No task_id in response: {result}")
+        print(f"  Task created: {task_id}")
+        return self._poll_task(task_id, endpoint="generations")
+
+    def _edit_multi(self, prompt, images_data, aspect_ratio):
+        url = f"{self.base_url}/v1/images/multi-image2image"
+        # Only use images with valid aspect ratio (1:2.5 ~ 2.5:1) as subjects
+        subject_list = []
+        for name, data in images_data:
+            from PIL import Image as PILImage
+            import io
+            img = PILImage.open(io.BytesIO(data))
+            w, h = img.size
+            ratio = max(w/h, h/w)
+            if ratio <= 2.5:
+                b64 = base64.b64encode(data).decode()
+                subject_list.append({"subject_image": b64})
+        if len(subject_list) < 2:
+            # Not enough valid images for multi-image, fall back to single
+            valid = [(n, d) for n, d in images_data if self._valid_ratio(d)]
+            if valid:
+                return self._edit_single(prompt, valid, aspect_ratio)
+            return self.generate(prompt, aspect_ratio)
+        body = {
+            "model_name": "kling-v2-1",
+            "prompt": prompt,
+            "subject_image_list": subject_list,
+            "n": 1,
+            "aspect_ratio": aspect_ratio,
+        }
+        resp = httpx.post(url, json=body, headers=self._headers(), timeout=30)
+        resp.raise_for_status()
+        result = resp.json()
+        task_id = result.get("data", {}).get("task_id")
+        if not task_id:
+            raise ValueError(f"No task_id in response: {result}")
+        print(f"  Task created: {task_id}")
+        return self._poll_task(task_id, endpoint="multi-image2image")
+
+    @staticmethod
+    def _valid_ratio(data):
+        from PIL import Image as PILImage
+        import io
+        img = PILImage.open(io.BytesIO(data))
+        w, h = img.size
+        return max(w/h, h/w) <= 2.5
 
 
-def download(url, output_path):
-    resp = httpx.get(url, timeout=60, follow_redirects=True)
-    resp.raise_for_status()
+# ── OpenAI-compatible client ────────────────────────────────────
+
+class OpenAIClient:
+    def __init__(self):
+        self.api_key = os.environ.get("HATCH_PET_API_KEY", "")
+        self.base_url = os.environ.get("HATCH_PET_BASE_URL", "https://api.openai.com")
+        self.model = os.environ.get("HATCH_PET_MODEL", "gpt-image-2")
+        if not self.api_key:
+            print("ERROR: HATCH_PET_API_KEY required for OpenAI provider.")
+            sys.exit(1)
+
+    def _headers_json(self):
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def _headers_form(self):
+        return {"Authorization": f"Bearer {self.api_key}"}
+
+    @staticmethod
+    def _extract(data):
+        if "url" in data:
+            return data["url"]
+        if "b64_json" in data:
+            return f"b64:{data['b64_json']}"
+        raise ValueError(f"Unexpected response: {list(data.keys())}")
+
+    def generate(self, prompt, size="1024x1024", retries=2):
+        for attempt in range(retries + 1):
+            try:
+                client = httpx.Client(timeout=httpx.Timeout(300.0), trust_env=False)
+                resp = client.post(
+                    f"{self.base_url}/v1/images/generations",
+                    json={"model": self.model, "prompt": prompt, "size": size,
+                          "n": 1, "quality": QUALITY},
+                    headers=self._headers_json(),
+                )
+                if resp.status_code != 200:
+                    print(f"  API error ({resp.status_code}): {resp.text[:300]}")
+                resp.raise_for_status()
+                return self._extract(resp.json()["data"][0])
+            except (httpx.ReadTimeout, httpx.RemoteProtocolError):
+                if attempt < retries:
+                    print(f"  TIMEOUT (attempt {attempt+1}/{retries+1}), retrying in 5s...")
+                    time.sleep(5)
+                else:
+                    raise
+
+    def edit(self, prompt, images_data, size="1024x1024", retries=3):
+        for attempt in range(retries + 1):
+            try:
+                client = httpx.Client(timeout=httpx.Timeout(300.0), trust_env=False)
+                files = [("image", (n, b, "image/png")) for n, b in images_data]
+                resp = client.post(
+                    f"{self.base_url}/v1/images/edits",
+                    data={"model": self.model, "prompt": prompt, "size": size,
+                          "n": "1", "quality": QUALITY},
+                    files=files,
+                    headers=self._headers_form(),
+                )
+                if resp.status_code != 200:
+                    print(f"  API error ({resp.status_code}): {resp.text[:200]}")
+                resp.raise_for_status()
+                return self._extract(resp.json()["data"][0])
+            except (httpx.ReadTimeout, httpx.RemoteProtocolError, httpx.ConnectError):
+                if attempt < retries:
+                    print(f"  ERROR (attempt {attempt+1}/{retries+1}), retrying in 10s...")
+                    time.sleep(10)
+                else:
+                    raise
+
+
+# ── Shared helpers ───────────────────────────────────────────────
+
+def get_client():
+    if PROVIDER == "kling":
+        return KlingClient()
+    return OpenAIClient()
+
+
+def download(url_or_b64, output_path):
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_bytes(resp.content)
+    if url_or_b64.startswith("b64:"):
+        output_path.write_bytes(base64.b64decode(url_or_b64[4:]))
+    else:
+        resp = httpx.get(url_or_b64, timeout=60, follow_redirects=True, trust_env=False)
+        resp.raise_for_status()
+        output_path.write_bytes(resp.content)
 
 
-def run_preview():
+# ── Preview & full generation ────────────────────────────────────
+
+def run_preview(pet_dir, hatch_dir, client):
     global QUALITY
-    manifest = json.loads((RUN_DIR / "jobs.json").read_text())
+    manifest = json.loads((hatch_dir / "jobs.json").read_text())
     QUALITY = manifest.get("pet", {}).get("quality", "medium")
     base_job = next(j for j in manifest["jobs"] if j["kind"] == "base-pet")
-    output = RUN_DIR / base_job["output_path"]
+    output = hatch_dir / base_job["output_path"]
 
     if output.exists():
         print(f"Preview already exists: {output}")
         print("Delete it to regenerate, or run without --preview to continue.")
         return
 
-    prompt = (RUN_DIR / base_job["prompt_file"]).read_text()
+    prompt = (hatch_dir / base_job["prompt_file"]).read_text()
     pet = manifest["pet"]
-    ref_image = pet.get("reference_image")
+    ref_image = manifest.get("reference_image")
 
     print(f"Generating preview for: {pet['displayName']}")
-    print(f"Style: {pet.get('style', 'auto')}")
+    print(f"Provider: {PROVIDER}")
     if ref_image:
         print(f"Reference image: {ref_image}")
-    print(f"Cost: ~$0.04 (medium) / ~$0.17 (high)\n")
 
     if ref_image:
-        ref_path = SKILL_DIR / ref_image
+        ref_path = Path(ref_image)
         if not ref_path.exists():
             print(f"ERROR: Reference image not found: {ref_path}")
             sys.exit(1)
         ref_bytes = ref_path.read_bytes()
-        url = call_edits(prompt, [("reference.png", ref_bytes)])
+        image_url = client.edit(prompt, [("reference.png", ref_bytes)])
     else:
-        url = call_generations(prompt)
+        image_url = client.generate(prompt)
 
-    download(url, output)
-
+    download(image_url, output)
     print(f"Preview saved: {output}")
-    print(f"\nCheck: style, character, chroma key background, centering.")
-    print(f"If satisfied:  python3 scripts/generate.py")
-    print(f"If not:        rm {output} && edit run/prompts/base.md && re-run --preview")
 
 
-def run_full():
+def run_full(pet_dir, hatch_dir, client):
     global QUALITY
-    manifest = json.loads((RUN_DIR / "jobs.json").read_text())
+    manifest = json.loads((hatch_dir / "jobs.json").read_text())
     QUALITY = manifest.get("pet", {}).get("quality", "medium")
     jobs = manifest["jobs"]
     base_job = next(j for j in jobs if j["kind"] == "base-pet")
     strip_jobs = [j for j in jobs if j["kind"] == "row-strip"]
     total = manifest["total_api_calls"]
 
-    base_path = RUN_DIR / base_job["output_path"]
+    base_path = hatch_dir / base_job["output_path"]
     if not base_path.exists():
         print("ERROR: Base pet not found. Run --preview first.")
         sys.exit(1)
@@ -135,37 +330,61 @@ def run_full():
 
     for job in strip_jobs:
         state = job["state"]
-        output = RUN_DIR / job["output_path"]
+        output = hatch_dir / job["output_path"]
         print(f"\n[{completed+1}/{total}] Strip: {state} ({job['frames']} frames)")
 
         if output.exists():
-            print(f"  SKIP (already exists)")
+            print("  SKIP (already exists)")
             completed += 1
             continue
 
-        prompt = (RUN_DIR / job["prompt_file"]).read_text()
+        prompt = (hatch_dir / job["prompt_file"]).read_text()
+        strip_size = job.get("strip_size", "1536x1024")
+
+        # Try edits endpoint with reference images first; fall back to generations
         images = []
         for ref in job["input_images"]:
-            ref_path = RUN_DIR / ref["path"]
-            if not ref_path.exists():
-                print(f"  ERROR: {ref_path} not found")
-                sys.exit(1)
-            images.append((ref_path.name, ref_path.read_bytes()))
+            ref_path = hatch_dir / ref["path"]
+            if ref_path.exists():
+                images.append((ref_path.name, ref_path.read_bytes()))
 
-        strip_size = job.get("strip_size", "1536x1024")
-        url = call_edits(prompt, images, size=strip_size)
-        # strip_size defaults to 1536x1024 for maximum API compatibility
-        download(url, output)
+        try:
+            if images:
+                image_url = client.edit(prompt, images, size=strip_size)
+            else:
+                image_url = client.generate(prompt, size=strip_size)
+        except (httpx.ConnectError, httpx.HTTPStatusError):
+            print("  Edits endpoint failed, falling back to generations...")
+            image_url = client.generate(prompt, size=strip_size)
+        download(image_url, output)
         print(f"  OK: {output}")
         completed += 1
         time.sleep(2)
 
     print(f"\n=== {total} API calls complete ===")
-    print(f"Next: python3 scripts/extract.py")
+    print(f"Next: python3 {SCRIPT_DIR}/extract.py {pet_dir}")
 
+
+# ── Main ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    if "--preview" in sys.argv:
-        run_preview()
+    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    flags = [a for a in sys.argv[1:] if a.startswith("-")]
+
+    if not args:
+        print("Usage: python3 generate.py <pet-dir> [--preview]")
+        sys.exit(1)
+
+    pet_dir = Path(args[0])
+    hatch_dir = pet_dir / ".hatch"
+
+    if not hatch_dir.exists():
+        print(f"ERROR: {hatch_dir} not found. Run prepare.py first.")
+        sys.exit(1)
+
+    client = get_client()
+
+    if "--preview" in flags:
+        run_preview(pet_dir, hatch_dir, client)
     else:
-        run_full()
+        run_full(pet_dir, hatch_dir, client)

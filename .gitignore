@@ -1,6 +1,5 @@
 .env
-run/
-output/
+.hatch/
 __pycache__/
 *.pyc
 .DS_Store

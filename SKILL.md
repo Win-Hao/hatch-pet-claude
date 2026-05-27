@@ -1,174 +1,151 @@
 ---
 name: hatch-pet
-description: Generate animated pixel art pet sprites with a multi-step pipeline. Outputs a Codex-compatible 1536x1872 sprite atlas with up to 9 animation states. Invoke when the user wants to create a pet, sprite, or animated character.
+description: >
+  Generate animated pixel art pet sprites from a text description or reference image.
+  Outputs a Codex-compatible 1536x1872 sprite atlas with up to 9 animation states.
+  Use this skill whenever the user wants to create a pet, sprite, animated character,
+  pixel art avatar, or game character — even if they don't say "hatch" or "sprite" explicitly.
+  Also use when the user provides a character image and wants it turned into an animated sprite,
+  or asks to generate/regenerate animation states for an existing pet.
+allowed-tools: >
+  Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/prepare.py *)
+  Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/generate.py *)
+  Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/extract.py *)
+  Bash(pip3 install *)
+  Read Write Edit
 ---
 
-# Hatch Pet — Agent Instructions
+# Hatch Pet
 
-You are guiding the user through generating an animated pet sprite. Follow these steps in order. Ask questions interactively — do NOT ask the user to edit files manually.
+Guide the user through generating an animated pet sprite. Follow these steps in order.
+Ask questions interactively — never ask the user to edit files manually.
 
-## Step 1: Collect Pet Information
+Each pet gets its own directory in the user's working directory. No cleanup needed
+between characters — just run the pipeline again for a new pet.
 
-Ask the user these questions one at a time (or grouped if natural):
+## Step 1 — Collect pet info
 
-1. **Character description**: "Describe your pet character — what does it look like? (e.g., 'a cute robot cat with glowing blue eyes' or 'a chibi wizard with a big hat')"
-2. **Name**: "What should we call this pet?" → derive `name` (kebab-case) and `displayName`
-3. **Style**: Show the options and ask:
-   - `pixel` — Pixel art with chunky outlines and flat shading (recommended, cheapest)
-   - `plush` — Soft plush toy with stitched details
-   - `clay` — Handmade clay figure look
-   - `sticker` — Bold clean shapes, flat colors
-   - `flat-vector` — Simple geometric forms
-   - `3d-toy` — Stylized 3D toy
-   - `painterly` — Brush texture, painterly feel
-   - `auto` — Let the AI decide
-4. **Quality**: Ask "What quality level? medium is recommended for pixel art (full set ~¥3), high gives more detail (~¥13)"
-5. **Animation states**: Ask which states they want, or suggest the default set. Explain each briefly:
-   - `idle` — Breathing/blinking resting loop
-   - `running-right` — Moving rightward (running-left auto-mirrored)
-   - `waving` — Greeting gesture
-   - `jumping` — Jump arc
-   - `failed` — Sad/slumped reaction
-   - `waiting` — Waiting for input
-   - `running` — Working/processing (not foot-running)
-   - `review` — Inspecting output
+Gather these details (group naturally, don't interrogate):
 
-## Step 1.5: Reference Image (Optional)
+1. **Character description** — what does it look like?
+2. **Name** → derive directory name (kebab-case) and `displayName`
+3. **Style** — see [references/style-presets.md](references/style-presets.md) for options. Default: `pixel`
+4. **Quality** — `medium` (recommended, ~$0.25 for 4 states) or `high` (~$1.00)
+5. **Animation states** — see [references/animation-rows.md](references/animation-rows.md) for the full list. Default: `idle`, `running-right`, `waving`, `failed`
 
-Ask: "Do you have a reference image (screenshot, sketch, existing character art)? This helps the AI match a specific look."
+## Step 2 — Reference image (optional)
 
-If yes:
-- Ask the user to provide the image path
-- Save it to `run/references/user-reference.png`
-- Set `"reference_image": "run/references/user-reference.png"` in pet.json
-- During preview, this image will be passed to the AI edits endpoint alongside the text prompt
+Ask if they have a reference image. If yes, save it as `<pet-name>/reference.<ext>`.
 
-If no: skip, text-only generation works fine.
+## Step 3 — API credentials
 
-## Step 2: Configure API
+This skill requires **GPT-Image-2** — it's the only model that can reliably draw multiple
+animation frames in a single horizontal strip image. Other models (Kling, DALL-E 3, Flux, etc.)
+cannot do this and will produce unusable output.
 
-Ask the user: "Which image generation API do you want to use? You need an OpenAI-compatible API that supports GPT-Image-2."
+Check if `.env` exists in the working directory. If not, ask for:
+- **Base URL** (OpenAI-compatible endpoint supporting GPT-Image-2, e.g. `https://api.openai.com`)
+- **API Key** — never log, display, or commit it. Mask when confirming (`sk-...xxxx`).
 
-Ask for:
-1. **Base URL** (e.g., `https://api.openai.com` or any OpenAI-compatible endpoint)
-2. **API Key**
-
-**Never log, display, or commit the API key.** When confirming, mask it (e.g., `sk-...xxxx`).
-
-Write the `.env` file:
+Write `.env` in the working directory:
 ```
-HATCH_PET_API_KEY=<their key>
-HATCH_PET_BASE_URL=<their base url>
+HATCH_PET_PROVIDER=openai
+HATCH_PET_API_KEY=<key>
+HATCH_PET_BASE_URL=<url>
 HATCH_PET_MODEL=gpt-image-2
 ```
 
-## Step 3: Write pet.json
+## Step 4 — Create pet directory and config
 
-Based on collected answers, write `pet.json`:
-
+Create `<pet-name>/pet.json`:
 ```json
 {
-  "name": "<kebab-case-name>",
+  "name": "<kebab-case>",
   "displayName": "<Display Name>",
-  "description": "<their character description, enriched with visual details>",
-  "reference_image": null,
-  "style": "<chosen style>",
-  "quality": "<medium or high>",
+  "description": "<enriched visual description>",
+  "style": "pixel",
+  "quality": "medium",
   "chroma_key": "auto",
-  "states": [<chosen states>],
+  "states": ["idle", "running-right", "waving", "failed"],
   "derive_running_left": true
 }
 ```
 
-When writing the `description` field, enrich the user's input with specific visual details that help image generation: proportions (e.g., "2.5 head-to-body ratio"), colors, materials, key features. Keep it one paragraph.
+Enrich the user's description with specific visual details: proportions (e.g., "2.5 head-to-body ratio"), colors, materials, key features. One paragraph.
 
-## Step 4: Prepare (Free)
+## Step 5 — Prepare (free)
 
-Run:
 ```bash
-python3 scripts/prepare.py
+python3 ${CLAUDE_SKILL_DIR}/scripts/prepare.py ./<pet-name>
 ```
 
-Show the user the summary (states count, estimated cost). Ask them to confirm before spending money.
+Show the summary. Confirm cost with the user before any API call.
 
-## Step 5: Preview (~$0.04 medium / ~$0.17 high)
+## Step 6 — Preview (~$0.04 medium)
 
-Run:
 ```bash
-python3 scripts/generate.py --preview
+python3 ${CLAUDE_SKILL_DIR}/scripts/generate.py ./<pet-name> --preview
 ```
 
-Show the generated base image to the user. Ask:
-- "Does this look like what you want?"
-- "Any changes to the character?"
-
-If not satisfied:
-1. Delete the preview: `rm run/decoded/base.png`
-2. Adjust the prompt in `run/prompts/base.md` based on feedback
+Show the base image to the user. If not satisfied:
+1. `rm <pet-name>/.hatch/decoded/base.png`
+2. Adjust `<pet-name>/.hatch/prompts/base.md`
 3. Re-run `--preview`
 
-Repeat until the user approves. Each attempt costs only ~$0.04 (medium).
+## Step 7 — Generate all strips
 
-## Step 6: Generate All Strips
-
-After preview is approved, run:
 ```bash
-python3 scripts/generate.py
+python3 ${CLAUDE_SKILL_DIR}/scripts/generate.py ./<pet-name>
 ```
 
-This generates all frame strips. Show progress to the user. If any strip fails (timeout), the script can be safely re-run — completed images are skipped.
+Safe to re-run — completed strips are skipped.
 
-## Step 7: Extract and Build Atlas (Free)
+## Step 8 — Extract and build atlas (free)
 
-Run:
 ```bash
-python3 scripts/extract.py
+python3 ${CLAUDE_SKILL_DIR}/scripts/extract.py ./<pet-name>
 ```
 
-This produces:
-- `output/spritesheet.png` — Full atlas (1536x1872)
-- `output/spritesheet.webp` — WebP version
-- `output/pet.json` — Pet metadata
-- `output/previews/*.gif` — Animation preview GIFs
+Show the preview GIFs to the user.
 
-Show the preview GIFs to the user so they can see each animation state in action.
+## Step 9 — Quality check
 
-## Step 8: Quality Check
+If any state has issues (frame drift, inconsistency):
+1. `rm <pet-name>/.hatch/decoded/<state>.png`
+2. Re-run generate.py then extract.py
 
-If any animation state has visible issues (frame drift, character inconsistency, characters too close):
-1. Delete the specific strip: `rm run/decoded/<state>.png`
-2. Re-run `python3 scripts/generate.py` (only regenerates the missing strip)
-3. Re-run `python3 scripts/extract.py`
+Retries often improve quality due to API randomness. ~$0.05 per strip at medium.
 
-The API has randomness — regenerating often produces better spacing on the next attempt. Medium quality costs only ~$0.05 per strip, so retrying is cheap.
+## Rules
 
-## Important Notes
+- **Never commit `.env`**
+- **Cost awareness** — always confirm cost before API calls
+- **No example strips as reference** — only the canonical base and layout guide should be passed to the edits API
+- Ensure `Pillow`, `numpy`, `httpx` are installed before running scripts
 
-- **Never commit `.env`** — it contains the API key
-- **Never display the full API key** — mask it when confirming (e.g., `sk-...xxxx`)
-- **Cost awareness**: Always tell the user the estimated cost before any API call
-- **Skip existing**: The generate script skips already-created files. Safe to re-run.
-- **Dependencies**: Ensure `Pillow`, `numpy`, `httpx` are installed before running scripts
-- **Do NOT pass example strips as reference images** — the edits API treats all images as visual references without role distinction. Passing another character's strip will pollute the output (copied poses, mixed visual elements). Only the canonical base and layout guide should be used as references.
+## User's directory structure
 
-## File Reference
+```
+working-directory/
+├── .env                          # API credentials (created once)
+├── iron-man/                     # One directory per pet
+│   ├── pet.json                  # Pet config
+│   ├── reference.webp            # Optional reference image
+│   ├── spritesheet.png           # Final atlas (after extract)
+│   ├── spritesheet.webp
+│   ├── previews/                 # Animation preview GIFs
+│   └── .hatch/                   # Working files (can gitignore)
+│       ├── jobs.json
+│       ├── prompts/
+│       ├── decoded/
+│       ├── layout-guides/
+│       └── frames/
+└── homelander/
+    └── ...
+```
 
-| File | Purpose |
-|------|---------|
-| `pet.json` | User's pet definition (you write this) |
-| `.env` | API credentials (you write this, never commit) |
-| `scripts/prepare.py` | Generates layout guides + prompts from pet.json |
-| `scripts/generate.py` | Calls the image API (`--preview` for base only) |
-| `scripts/extract.py` | Frame extraction, atlas composition, GIF previews |
-| `references/animation-rows.md` | Atlas row spec (frame counts + durations) |
-| `references/style-presets.md` | Visual style descriptions |
+## Additional resources
 
-## Cost Reference (OpenAI direct, per image)
-
-| Quality | 1024x1024 | 1536x1024 |
-|---------|-----------|-----------|
-| low | $0.011 | $0.013 |
-| medium | $0.042 | $0.050 |
-| high | $0.167 | $0.200 |
-
-Full pipeline (1 base + 8 strips): medium ~$0.44 / high ~$1.77
+- [references/style-presets.md](references/style-presets.md) — visual style options
+- [references/animation-rows.md](references/animation-rows.md) — atlas row spec with frame counts and durations
+- [references/cost-reference.md](references/cost-reference.md) — per-image pricing

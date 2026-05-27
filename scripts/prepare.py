@@ -1,25 +1,28 @@
 #!/usr/bin/env python3
-"""Step 1: Read pet.json, generate layout guides and prompt files. No API calls."""
+"""Step 1: Read pet.json from a pet directory, generate layout guides and prompt files.
+
+Usage: python3 prepare.py <pet-dir>
+"""
 
 from PIL import Image, ImageDraw
 from pathlib import Path
 import json
 import shutil
+import sys
 
-SKILL_DIR = Path(__file__).parent.parent
-RUN_DIR = SKILL_DIR / "run"
+SCRIPT_DIR = Path(__file__).parent
+SKILL_DIR = SCRIPT_DIR.parent
+ASSETS_DIR = SKILL_DIR / "assets"
 
-# ── Atlas constants (Codex pet contract) ─────────────────────────────
 CELL_WIDTH = 192
 CELL_HEIGHT = 208
 COLUMNS = 8
 ROWS = 9
-ATLAS_WIDTH = COLUMNS * CELL_WIDTH   # 1536
-ATLAS_HEIGHT = ROWS * CELL_HEIGHT    # 1872
+ATLAS_WIDTH = COLUMNS * CELL_WIDTH
+ATLAS_HEIGHT = ROWS * CELL_HEIGHT
 SAFE_MARGIN_X = 18
 SAFE_MARGIN_Y = 16
 
-# ── State definitions ────────────────────────────────────────────────
 STATES = {
     "idle": {
         "row": 0, "frames": 6,
@@ -128,7 +131,7 @@ PET_SAFE_STYLE = (
 )
 
 
-# ── Layout guide generation ──────────────────────────────────────────
+# ── Layout guide helpers ──────────────────────────────────────────
 
 def draw_dashed_line(draw, start, end, color, width=1, dash=8, gap=6):
     x0, y0 = start
@@ -152,17 +155,23 @@ STRIP_SIZES = {
 }
 FALLBACK_SIZE = ("1536x1024", 1536, 1024)
 
+# Standard API sizes supported by most providers
+API_SIZES = {"1024x1024", "1536x1024", "1024x1536"}
+
 
 def compute_strip_size(frame_count):
-    """Return the optimal API output size for a given frame count.
-    Uses compact custom sizes where supported; falls back to 1536x1024
-    with proportionally scaled layout guides for unsupported counts."""
     return STRIP_SIZES.get(frame_count, FALLBACK_SIZE)
 
 
+def api_strip_size(frame_count):
+    """Return the API request size — use standard size if custom isn't supported."""
+    size_str, w, h = compute_strip_size(frame_count)
+    if size_str in API_SIZES:
+        return size_str
+    return "1536x1024"
+
+
 def create_layout_guide(frame_count, output_path):
-    """Create a layout guide at the API output size for this frame count.
-    Custom sizes use natural cell dimensions; fallback uses proportional scaling."""
     size_str, canvas_w, canvas_h = compute_strip_size(frame_count)
     img = Image.new("RGB", (canvas_w, canvas_h), (0xF7, 0xF7, 0xF7))
     draw = ImageDraw.Draw(img)
@@ -199,51 +208,100 @@ def create_layout_guide(frame_count, output_path):
     img.save(output_path)
 
 
-# ── Prompt generation ────────────────────────────────────────────────
+# ── Prompt generation ────────────────────────────────────────────
 
 def build_style_contract(style_key):
     preset = STYLE_PRESETS.get(style_key, STYLE_PRESETS["auto"])
     return f"{PET_SAFE_STYLE} Style `{style_key}`: {preset}"
 
 
-def base_prompt(pet, chroma_name, chroma_hex, style_contract):
-    return f"""Create one clean full-body reference sprite for pet `{pet['name']}`.
+STYLE_SHORT = {
+    "pixel": "pixel art", "plush": "plush toy", "clay": "clay figure",
+    "sticker": "sticker", "flat-vector": "flat vector", "3d-toy": "3D toy",
+    "painterly": "painterly",
+}
 
-Pet identity: {pet['description']}
-Style: {style_contract}
+def base_prompt(pet, chroma_name, chroma_hex, style_contract, provider="openai"):
+    if provider == "kling":
+        return base_prompt_kling(pet, chroma_hex)
+    style = STYLE_SHORT.get(pet.get("style", "pixel"), "pixel art")
+    desc = pet["description"]
+    # Truncate to fit within API limits (~140 chars total target)
+    max_desc = 90
+    if len(desc) > max_desc:
+        desc = desc[:max_desc].rsplit(" ", 1)[0]
+    return f"Chibi {style} sprite: {desc}. On flat {chroma_name} {chroma_hex} background, no shadows"
 
-Place a single centered pose on a perfectly flat pure {chroma_name} {chroma_hex} chroma-key background. Keep the full pet visible, compact, readable at 192x208, and easy to animate. Preserve approved reference identity cues. No scenery, text, borders, checkerboard transparency, shadows, glows, detached effects, or extra props. Keep {chroma_hex} and close colors out of the pet, props, highlights, and effects."""
+
+def base_prompt_kling(pet, chroma_hex):
+    style = pet.get("style", "pixel")
+    style_desc = {
+        "pixel": "像素风格(pixel art)，粗黑色轮廓线，有限色板，平涂着色，可见的像素锯齿边缘，复古游戏角色风格",
+        "plush": "毛绒玩具风格，圆润柔软的造型，缝线细节",
+        "clay": "黏土手办风格，圆润的雕塑造型，柔和材质纹理",
+        "sticker": "贴纸风格，粗轮廓线，扁平色块，干净利落",
+        "flat-vector": "扁平矢量风格，简洁几何形状，纯色填充",
+        "3d-toy": "3D 玩具风格，圆润光滑造型，简单材质",
+        "painterly": "手绘水彩风格，笔触纹理，柔和色彩",
+    }.get(style, "像素风格(pixel art)")
+    return f"""{style_desc}，Q版大头小身体角色，{pet['description']}。
+纯品红色(magenta {chroma_hex})纯色背景，角色居中站立，全身可见。
+不要任何场景、文字、阴影、光效、地面或装饰物。"""
 
 
-def row_prompt(pet, state_name, state_cfg, chroma_name, chroma_hex, style_contract):
+def row_prompt(pet, state_name, state_cfg, chroma_name, chroma_hex, style_contract, provider="openai"):
     frames = state_cfg["frames"]
-    requirements = "\n".join(f"- {r}" for r in state_cfg["requirements"])
-    return f"""Create one horizontal animation strip for pet `{pet['name']}`, state `{state_name}`.
-
-Use the attached canonical base for identity. Use the attached layout guide to see exactly where and how large to draw each character — match the slot positions, sizes, and spacing shown in the guide. Do not draw the guide lines themselves.
-
-Output exactly {frames} full-body frames on flat pure {chroma_name} {chroma_hex}. Place one centered complete pose per slot shown in the layout guide, keeping each character fully inside its slot with no overlap between adjacent characters.
-
-Identity: same pet in every frame: {pet['description']}. Preserve silhouette, face, proportions, markings, palette, material, style, and props.
-Style: {style_contract}
-Animation continuity: keep apparent pet scale and baseline stable within the row unless the state itself intentionally changes vertical position, such as `jumping`. Move the pose within the slot instead of redrawing the pet larger or smaller frame to frame.
-
-State action: {state_cfg['action']}
-
-State requirements:
-{requirements}
-
-Clean extraction: crisp opaque edges, safe padding, no scenery, text, guide marks, checkerboard, shadows, glows, motion blur, speed lines, dust, detached effects, stray pixels, or chroma-key colors inside the pet."""
+    if provider == "kling":
+        return row_prompt_kling(pet, state_name, state_cfg, chroma_hex, frames)
+    action = state_cfg["action"].split(":")[0]
+    return f"{frames}-frame animation strip: same character, {action}. Match attached base identity. Follow layout guide slots. Flat {chroma_name} {chroma_hex} background, no shadows or effects."
 
 
-# ── Main ─────────────────────────────────────────────────────────────
+def row_prompt_kling(pet, state_name, state_cfg, chroma_hex, frames):
+    action_cn = {
+        "idle": "安静站立的待机动作，微微呼吸起伏",
+        "running-right": "向右奔跑的动作，身体和四肢表现出向右移动",
+        "waving": "举手打招呼的挥手动作",
+        "jumping": "跳跃动作，从蓄力到腾空到落地",
+        "failed": "失败沮丧的动作，低头耷拉",
+        "waiting": "等待中的动作，期待的表情",
+        "running": "忙碌工作中的动作，专注思考",
+        "review": "检查审视的动作，仔细端详",
+    }.get(state_name, state_cfg["action"])
+    return f"""像素风格(pixel art)动画序列，水平排列{frames}个相同角色的不同动作帧。
+角色：{pet['description']}
+动作：{action_cn}
+在纯品红色(magenta {chroma_hex})背景上，水平一排放置{frames}个全身角色，每个角色是动画的一帧，动作略有变化形成连续动画。
+角色之间等距排列，不重叠。保持每帧角色的外观、配色、比例完全一致。
+不要任何场景、文字、阴影、地面、特效或装饰物。"""
+
+
+# ── Main ─────────────────────────────────────────────────────────
 
 def main():
-    pet_path = SKILL_DIR / "pet.json"
+    if len(sys.argv) < 2:
+        print("Usage: python3 prepare.py <pet-dir>")
+        print("Example: python3 prepare.py ./iron-man")
+        sys.exit(1)
+
+    pet_dir = Path(sys.argv[1])
+    pet_path = pet_dir / "pet.json"
     if not pet_path.exists():
-        print(f"ERROR: {pet_path} not found. Create it from the example in SKILL.md.")
-        return
+        print(f"ERROR: {pet_path} not found.")
+        sys.exit(1)
+
     pet = json.loads(pet_path.read_text())
+    hatch_dir = pet_dir / ".hatch"
+
+    # Detect provider from .env
+    provider = "openai"
+    for p in [Path.cwd()] + list(Path.cwd().parents):
+        env_file = p / ".env"
+        if env_file.exists():
+            for line in env_file.read_text().splitlines():
+                if line.strip().startswith("HATCH_PET_PROVIDER="):
+                    provider = line.strip().split("=", 1)[1].strip()
+            break
 
     chroma = pet.get("chroma_key", "auto")
     if chroma == "auto":
@@ -258,16 +316,16 @@ def main():
     if derive_left and "running-left" in requested_states:
         requested_states = [s for s in requested_states if s != "running-left"]
 
-    RUN_DIR.mkdir(parents=True, exist_ok=True)
-    guides_dir = RUN_DIR / "references" / "layout-guides"
+    # Create working directories
+    guides_dir = hatch_dir / "layout-guides"
     guides_dir.mkdir(parents=True, exist_ok=True)
-    prompts_dir = RUN_DIR / "prompts"
+    prompts_dir = hatch_dir / "prompts"
     (prompts_dir / "rows").mkdir(parents=True, exist_ok=True)
-    (RUN_DIR / "decoded").mkdir(parents=True, exist_ok=True)
+    (hatch_dir / "decoded").mkdir(parents=True, exist_ok=True)
 
-    # 1. Layout guides — copy pre-generated from references/, fall back to dynamic generation
+    # 1. Layout guides — copy from skill assets, fall back to dynamic generation
     print("=== Layout guides ===")
-    bundled_guides_dir = SKILL_DIR / "references" / "layout-guides"
+    bundled_guides_dir = ASSETS_DIR / "layout-guides"
     generated_guides = set()
     for state_name in requested_states:
         cfg = STATES[state_name]
@@ -278,18 +336,26 @@ def main():
             if bundled.exists():
                 shutil.copy2(bundled, dest)
                 size_str, _, _ = compute_strip_size(fc)
-                print(f"  {fc} frames: copied from references/ ({size_str})")
+                print(f"  {fc} frames: copied from assets/ ({size_str})")
             else:
-                size_str = create_layout_guide(fc, dest)
+                create_layout_guide(fc, dest)
+                size_str, _, _ = compute_strip_size(fc)
                 print(f"  {fc} frames: generated ({size_str})")
             generated_guides.add(fc)
 
-    # 2. Base prompt
+    # 2. Detect reference image
+    ref_image = None
+    for ext in ("png", "jpg", "jpeg", "webp"):
+        candidate = pet_dir / f"reference.{ext}"
+        if candidate.exists():
+            ref_image = str(candidate)
+            break
+
+    # 3. Base prompt
     print("\n=== Prompts ===")
-    bp = base_prompt(pet, chroma_name, chroma_hex, style_contract)
-    base_prompt_path = prompts_dir / "base.md"
-    base_prompt_path.write_text(bp)
-    print(f"  base.md")
+    bp = base_prompt(pet, chroma_name, chroma_hex, style_contract, provider)
+    (prompts_dir / "base.md").write_text(bp)
+    print(f"  base.md (provider: {provider})")
 
     jobs = [{
         "id": "base",
@@ -298,29 +364,27 @@ def main():
         "output_path": "decoded/base.png",
     }]
 
-    # 3. Row prompts
+    # 4. Row prompts
     for state_name in requested_states:
         cfg = STATES[state_name]
         fc = cfg["frames"]
-        rp = row_prompt(pet, state_name, cfg, chroma_name, chroma_hex, style_contract)
-        prompt_path = prompts_dir / "rows" / f"{state_name}.md"
-        prompt_path.write_text(rp)
+        rp = row_prompt(pet, state_name, cfg, chroma_name, chroma_hex, style_contract, provider)
+        (prompts_dir / "rows" / f"{state_name}.md").write_text(rp)
         print(f"  rows/{state_name}.md")
 
-        strip_size, _, _ = compute_strip_size(fc)
         jobs.append({
             "id": f"row-{state_name}",
             "kind": "row-strip",
             "state": state_name,
             "row": cfg["row"],
             "frames": fc,
-            "strip_size": strip_size,
+            "strip_size": api_strip_size(fc),
             "prompt_file": f"prompts/rows/{state_name}.md",
             "output_path": f"decoded/{state_name}.png",
             "depends_on": "base",
             "input_images": [
                 {"role": "canonical identity reference", "path": "decoded/base.png"},
-                {"role": f"layout guide for {fc} frame slots", "path": f"references/layout-guides/{fc}f.png"},
+                {"role": f"layout guide for {fc} frame slots", "path": f"layout-guides/{fc}f.png"},
             ],
         })
 
@@ -335,25 +399,33 @@ def main():
             "depends_on": "row-running-right",
         })
 
-    # 4. Manifest
+    # 5. Manifest
     api_calls = sum(1 for j in jobs if j["kind"] in ("base-pet", "row-strip"))
     manifest = {
         "pet": pet,
+        "pet_dir": str(pet_dir),
+        "reference_image": ref_image,
         "chroma_key": {"hex": chroma_hex, "name": chroma_name},
         "style_contract": style_contract,
         "jobs": jobs,
         "total_api_calls": api_calls,
     }
-    (RUN_DIR / "jobs.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
+    (hatch_dir / "jobs.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
 
     print(f"\n=== Summary ===")
     print(f"  Pet: {pet['displayName']} ({pet['name']})")
     print(f"  Style: {pet.get('style', 'auto')}")
     print(f"  Chroma key: {chroma_hex}")
+    if ref_image:
+        print(f"  Reference: {ref_image}")
     print(f"  States: {len(requested_states)} + {'mirror' if derive_left else 'generate'} running-left")
     print(f"  API calls: {api_calls} (1 base + {api_calls - 1} strips)")
-    print(f"  Est. cost: ${0.17 + (api_calls - 1) * 0.33:.2f}")
-    print(f"\n  Next: python3 scripts/generate.py --preview")
+    quality = pet.get("quality", "medium")
+    cost_per = {"low": (0.011, 0.013), "medium": (0.042, 0.050), "high": (0.167, 0.200)}
+    base_cost, strip_cost = cost_per.get(quality, cost_per["medium"])
+    cost = base_cost + (api_calls - 1) * strip_cost
+    print(f"  Est. cost: ${cost:.2f} ({quality})")
+    print(f"\n  Next: python3 {SCRIPT_DIR}/generate.py {pet_dir} --preview")
 
 
 if __name__ == "__main__":
